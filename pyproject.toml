@@ -5,7 +5,9 @@ description = "Add your description here"
 readme = "README.md"
 authors = [{ name = "AllenWu233", email = "allenwu233@outlook.com" }]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "pyqt6>=6.11.0",
+]
 
 [project.scripts]
 ruka-kmm = "ruka_kmm.main:main"
