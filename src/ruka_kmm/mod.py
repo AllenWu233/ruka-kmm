@@ -1,3 +1,4 @@
+from enum import Enum, auto
 from dataclasses import dataclass, field
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -5,17 +6,22 @@ from typing import Self
 import re
 
 
+class ModSource(Enum):
+    GAME_ROOT = auto()
+    WORKSHOP = auto()
+
+
 @dataclass
 class Mod:
     """Information of single modification"""
 
     enabled: bool = False
-    local: bool = False  # True: Local / False: Steam Workshop
-    id: str = ""
+    source: ModSource = ModSource.GAME_ROOT
+    id: str | None = None
     mod: str = ""  # Mod name displays in Kenshi Official Launcher
     author: str = ""
     title: str = ""
-    url: str = ""
+    url: str | None = None
     tags: list[str] = field(default_factory=list)
     visibility: int | None = None
     last_update: str = ""
@@ -50,17 +56,17 @@ class Mod:
         # match = re.search(r"([A-Za-z0-9_][A-Za-z0-9_ ]*)", head)
         author = match.group(1).strip() if match else ""
 
-        raw = Mod._clean_text(raw)
+        desc = Mod._clean_text(raw).removeprefix(author)
         # Take everything before first 'gamedata.base'
         stop_marker = "gamedata.base"
-        pos = raw.find(stop_marker)
+        pos = desc.find(stop_marker)
         if pos != -1:
-            raw = raw[:pos]
+            desc = desc[:pos]
 
-        return (author, raw)
+        return (author, desc)
 
     @classmethod
-    def from_path(cls, root_path: Path | str, local: bool) -> Self:
+    def from_path(cls, root_path: Path | str, source: ModSource) -> Self:
         """Initialize Mod from single mod directory"""
         root_path = Path(root_path).expanduser().resolve()
         if not root_path.exists():
@@ -71,12 +77,14 @@ class Mod:
         mod_file = cls._find_file_ext(root_path, ".mod")
         if not mod_file:
             raise FileNotFoundError(f".mod file not found in {root_path}")
-        desc, author = cls._get_author_and_desc_from_mod_file(mod_file)
+
+        mod = mod_file.stem
+        author, desc = cls._get_author_and_desc_from_mod_file(mod_file)
 
         img = cls._find_file_ext(root_path, ".img")
 
         # Process metadata if optional .info XML file exists
-        info_file = cls._find_file_ext(root_path, ".info")
+        info_file = cls._find_file_ext(root_path, mod + ".info")
         if info_file:
             tree = ET.parse(info_file)
             root = tree.getroot()
@@ -84,10 +92,10 @@ class Mod:
 
             id = root.findtext("id", "")
 
-            if local:
-                url = ""
-            else:
+            if source == ModSource.WORKSHOP:
                 url = f"https://steamcommunity.com/sharedfiles/filedetails/?id={id}"
+            else:
+                url = ""
 
             try:
                 visibility = int(root.findtext("visibility", ""))
@@ -95,9 +103,10 @@ class Mod:
                 visibility = None
 
             mod_obj = cls(
-                local=local,
+                source=source,
                 id=id,
-                mod=root.findtext("mod", ""),
+                # mod=root.findtext("mod", ""),
+                mod=mod,
                 author=author,
                 title=root.findtext("title", ""),
                 url=url,
@@ -110,8 +119,8 @@ class Mod:
         else:
             # Fallback to defaults for missing info file
             mod_obj = cls(
-                local=local,
-                mod=mod_file.stem,
+                source=source,
+                mod=mod,
                 author=author,
                 desc=desc,
                 img=img,
