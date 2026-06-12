@@ -10,6 +10,9 @@ class ModSource(Enum):
     GAME_ROOT = auto()
     WORKSHOP = auto()
 
+    def __str__(self):
+        return self.name.replace("_", " ").title()
+
 
 @dataclass
 class Mod:
