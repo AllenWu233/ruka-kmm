@@ -53,21 +53,29 @@ class ModManager:
         )
         return game_root_mods + workshop_mods
 
-    def _get_enabled_mod_names(self) -> list[str]:
+    def _get_enabled_mod_names(self, mods_cfg_path: Path | None = None) -> list[str]:
         """Read enabled mod names from <kenshi_game_root>/data/mod.cfg"""
-        content = self.mods_cfg_path.read_text(encoding="utf-8")
+        if mods_cfg_path is None:
+            mods_cfg_path = self.mods_cfg_path
+
+        if not mods_cfg_path.exists():
+            raise FileNotFoundError(f"{mods_cfg_path} not found.")
+
+        content = mods_cfg_path.read_text(encoding="utf-8")
         return [
             line.removesuffix(".mod") for line in content.splitlines() if line.strip()
         ]
 
-    def _create_json_if_missing(self, force_apply: bool = False) -> None:
+    def _create_json_if_missing(
+        self, force_apply: bool = False, mods_cfg_path: Path | None = None
+    ) -> None:
         """Create Ruka KMM mod list in JSON from mods.cfg if not exists,
         use force_apply flag to overwrite"""
         if self.json_mod_list.exists() and not force_apply:
             return
 
         all_mod_names = [mod.mod for mod in self._scan_all_mods()]
-        enabled_mod_names = self._get_enabled_mod_names()
+        enabled_mod_names = self._get_enabled_mod_names(mods_cfg_path=mods_cfg_path)
         disabled_mod_names = [
             mod for mod in all_mod_names if mod not in set(enabled_mod_names)
         ]
@@ -78,8 +86,13 @@ class ModManager:
         }
         json_dump(data, self.json_mod_list)
 
-    def _read_json_mod_list(self) -> list[tuple[str, bool]]:
-        """Read json data from Ruka KMM configuration"""
+    def _read_json_mod_list(
+        self, json_path: Path | None = None
+    ) -> list[tuple[str, bool]]:
+        """Read json data from Ruka KMM configuration, read self.json_mod_list as default"""
+        if json_path is None:
+            json_path = self.json_mod_list
+
         if not self.json_mod_list.exists():
             raise FileNotFoundError(f"{self.json_mod_list} not found.")
 
@@ -98,17 +111,21 @@ class ModManager:
                 if mod.enabled:
                     f.write(mod.mod + ".mod\n")
 
-    def _sync_with_json(self, json_path: Path, overwrite: bool):
-        """Update self.mods according to Ruka KMM mod list JSON file.
+    def _sync_with_json(self, json_path: Path | None = None, overwrite: bool = False):
+        """Update self.mods according to Ruka KMM mod list JSON file,
+        use self.ruka_kmm_mod_list as default.
 
         If mods.cfg is different with ruka-kmm-mod-list.json,
         keep enabled status from mods.cfg and order from .json when overwrite is False,
         otherwise keep .json enabled status"""
+        if json_path is None:
+            json_path = self.json_mod_list
+
         if not json_path.exists():
             raise FileNotFoundError(f"{json_path} not found.")
 
         try:
-            ordered = self._read_json_mod_list()  # [(mod: str, enabled: bool)]
+            ordered = self._read_json_mod_list(json_path)  # [(mod: str, enabled: bool)]
         except json.JSONDecodeError as e:
             raise ValueError(
                 f"Failed to parse mod list: {json_path} is broken or not a valid JSON file."
@@ -131,14 +148,6 @@ class ModManager:
         remaining.sort(key=lambda m: m.mod)
         new_mods += remaining
 
-        # if overwrite:
-        #     # Overwrite mod.cfg with JSON mod list
-        #     self._write_mod_cfg(new_mods)
-        # else:
-        #     # Keep enabled status from mods.cfg and order from .json
-        #     data = ModManager._construct_json_data(new_mods)
-        #     json_dump(data, self.json_mod_list)
-
         self.mods = new_mods
 
     ### Import and Export
@@ -154,15 +163,20 @@ class ModManager:
         json_dump(data, dst)
 
     def save_and_apply_mods(self) -> None:
-        """Apply mod list from self.mods and save it to self.ruka_kmm_mod_list,
-        use for Save button"""
+        """Apply mod list from self.mods and save it to self.ruka_kmm_mod_list"""
         self._write_mod_cfg(self.mods)
         data = ModManager._construct_json_data(self.mods)
         json_dump(data, self.json_mod_list)
 
     def import_json_mod_list(self, json_path: Path) -> None:
-        """Import and apply JSON mod list"""
+        """Import and apply external JSON mod list"""
         self._sync_with_json(json_path, overwrite=True)
+        self.save_and_apply_mods()
+
+    def import_mods_cfg(self, mods_cfg_path: Path) -> None:
+        """Import and apply mod list from external mod.cfg"""
+        self._create_json_if_missing(force_apply=True, mods_cfg_path=mods_cfg_path)
+        self._sync_with_json(overwrite=True)
         self.save_and_apply_mods()
 
 
