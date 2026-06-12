@@ -2,7 +2,7 @@
 
 ## Description
 
-A Kenshi mod manager built with PyQt6.
+A Kenshi mod manager built with PyQt6 for Linux.
 
 ## Usage
 
