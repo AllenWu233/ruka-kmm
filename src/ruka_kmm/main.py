@@ -1,7 +1,7 @@
 import sys
 import os
 from pathlib import Path
-from PyQt6 import QtWidgets
+from PyQt6 import QtWidgets, QtGui
 
 from ruka_kmm.ui.main_window import Ui_MainWindow
 from ruka_kmm.mod_manager import ModManager
@@ -18,6 +18,11 @@ def main_window():
     set_qt6ct_path()
 
     app = QtWidgets.QApplication(sys.argv)
+
+    icon_path = Path(__file__).parent / "resources" / "img" / "icon.png"
+    if icon_path.exists():
+        app.setWindowIcon(QtGui.QIcon(str(icon_path)))
+
     MainWindow = QtWidgets.QMainWindow()
     ui = Ui_MainWindow()
     ui.setupUi(MainWindow)
