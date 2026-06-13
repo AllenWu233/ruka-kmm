@@ -23,7 +23,7 @@ class ModManager:
         self, mod_list_json_path: Path, game_path: Path, workshop_mods_path: Path
     ) -> None:
         self.mod_list_json_path: Path = mod_list_json_path  # Ruka KMM mod list
-        self.game_path: Path = game_path
+        self.game_path: Path = game_path  # Kenshi game root
         self.game_mods_path: Path = game_path / "mods"
         self.workshop_mods_path: Path = workshop_mods_path
         self.mods_cfg_path: Path = game_path / "data" / "mods.cfg"
@@ -38,12 +38,8 @@ class ModManager:
         for title, desc in const.category_intros:
             self.categories.append(Category(title, desc, []))
 
-    def _scan_mods_from_path(
-        self, mods_path: Path | str, source: ModSource
-    ) -> list[Mod]:
+    def _scan_mods_from_path(self, mods_path: Path, source: ModSource) -> list[Mod]:
         """Scan all the mods from path"""
-        mods_path = Path(mods_path).expanduser()
-
         if not mods_path.exists():
             raise FileNotFoundError(f"{source} mods path does not exist: {mods_path}")
         if not mods_path.is_dir():
@@ -71,8 +67,8 @@ class ModManager:
         )
         return game_root_mods + workshop_mods
 
-    def _get_enabled_mod_names(self, mods_cfg_path: Path | None = None) -> list[str]:
-        """Read enabled mod names from <kenshi_game_root>/data/mod.cfg"""
+    def _get_active_mod_names(self, mods_cfg_path: Path | None = None) -> list[str]:
+        """Read active mod names from <kenshi_game_root>/data/mod.cfg"""
         if mods_cfg_path is None:
             mods_cfg_path = self.mods_cfg_path
 
@@ -87,24 +83,25 @@ class ModManager:
     def _create_json_if_missing(
         self, force_apply: bool = False, mods_cfg_path: Path | None = None
     ) -> None:
-        """Create Ruka KMM mod list in JSON from mods.cfg if not exists,
-        use force_apply flag to overwrite"""
+        """Create Ruka KMM mod list in JSON format from mods.cfg if not exists,
+        use `force_apply` flag to overwrite existing .json"""
         if self.mod_list_json_path.exists() and not force_apply:
             return
 
         all_mod_names = [mod.mod for mod in self._scan_all_mods()]
-        enabled_mod_names = self._get_enabled_mod_names(mods_cfg_path=mods_cfg_path)
-        disabled_mod_names = [
-            mod for mod in all_mod_names if mod not in set(enabled_mod_names)
+        active_mod_names = self._get_active_mod_names(mods_cfg_path=mods_cfg_path)
+        inactive_mod_names = [
+            mod for mod in all_mod_names if mod not in set(active_mod_names)
         ]
 
         categories = [
             {"category": cat, "desc": desc, "mods": []}
             for cat, desc in const.category_intros
         ]
-        categories[-1]["mods"] = [
-            {"mod": mod, "enabled": True} for mod in enabled_mod_names
-        ] + [{"mod": mod, "enabled": False} for mod in disabled_mod_names]
+        uncat_category = categories[-1]
+        uncat_category["mods"] = [
+            {"mod": mod, "active": True} for mod in active_mod_names
+        ] + [{"mod": mod, "active": False} for mod in inactive_mod_names]
 
         json_dump(categories, self.mod_list_json_path)
 
@@ -113,10 +110,10 @@ class ModManager:
         if json_path is None:
             json_path = self.mod_list_json_path
 
-        if not self.mod_list_json_path.exists():
-            raise FileNotFoundError(f"{self.mod_list_json_path} not found.")
+        if not json_path.exists():
+            raise FileNotFoundError(f"{json_path} not found.")
 
-        with open(self.mod_list_json_path, "r", encoding="utf-8") as f:
+        with open(json_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
     def _write_mod_cfg(self, categories: list[Category]) -> None:
@@ -127,7 +124,7 @@ class ModManager:
         with open(self.mods_cfg_path, "w", encoding="utf-8") as f:
             for category in categories:
                 for mod in category.mods:
-                    if mod.enabled:
+                    if mod.active:
                         f.write(mod.mod + ".mod\n")
 
     def _sync_with_json(self, json_path: Path | None = None, overwrite: bool = False):
@@ -135,26 +132,21 @@ class ModManager:
         use self.mod_list_json_path as default.
 
         If mods.cfg is different with .json,
-        keep enabled status from mods.cfg and order from .json when overwrite is False,
-        otherwise keep .json enabled status"""
-        if json_path is None:
-            json_path = self.mod_list_json_path
-
-        if not json_path.exists():
-            raise FileNotFoundError(f"{json_path} not found.")
-
+        keep active status from mods.cfg and order from .json when `overwrite` is False,
+        otherwise keep .json active status"""
+        actual_path = json_path if json_path is not None else self.mod_list_json_path
         try:
-            categoriy_dicts = self._read_json_mod_list()
-        except json.JSONDecodeError as e:
+            categoriy_dicts = self._read_json_mod_list(json_path)
+        except (json.JSONDecodeError, FileNotFoundError, PermissionError) as e:
             raise ValueError(
-                f"Failed to parse mod list: {json_path} is broken or not a valid JSON file."
+                f"Failed to parse mod list: {actual_path} is missing, broken or invalid."
             ) from e
 
         mods = self._scan_all_mods()
-        mod_dict = {mod.mod: mod for mod in mods}
+        mod_objects = {mod.mod: mod for mod in mods}
         new_categories = []
 
-        enabled_mods = set(self._get_enabled_mod_names()) if not overwrite else set()
+        active_mods = set(self._get_active_mod_names()) if not overwrite else set()
 
         for category_dict in categoriy_dicts:
             new_categories.append(
@@ -166,13 +158,13 @@ class ModManager:
             )
             for mod in category_dict["mods"]:
                 mod_name = mod["mod"]
-                enabled = mod["enabled"]
-                if mod_name in mod_dict:
-                    mod = mod_dict.pop(mod_name)
-                    mod.enabled = enabled if overwrite else (mod_name in enabled_mods)
+                active = mod["active"]
+                if mod_name in mod_objects:
+                    mod = mod_objects.pop(mod_name)
+                    mod.active = active if overwrite else (mod_name in active_mods)
                     new_categories[-1].mods.append(mod)
 
-        remaining = list(mod_dict.values())
+        remaining = list(mod_objects.values())
         remaining.sort(key=lambda m: m.mod)
         new_categories[-1].mods += remaining
 
@@ -181,12 +173,14 @@ class ModManager:
     ### Import and Export
     @staticmethod
     def _construct_json_data(categories: list[Category]) -> list[dict]:
-        """Construct mod name and enabled status data list"""
+        """Construct mod name and active status data list"""
         data = [
             {
                 "category": category.title,
                 "desc": category.desc,
-                "mods": category.mods,
+                "mods": [
+                    {"mod": mod.mod, "active": mod.active} for mod in category.mods
+                ],
             }
             for category in categories
         ]
@@ -197,8 +191,8 @@ class ModManager:
         data = ModManager._construct_json_data(self.categories)
         json_dump(data, dst)
 
-    def save_and_apply_mods(self) -> None:
-        """Apply mod list from self.mods and save it to self.ruka_kmm_mod_list"""
+    def apply_and_save_mods(self) -> None:
+        """Apply mod list from self.categories and save it to self.ruka_kmm_mod_list"""
         self._write_mod_cfg(self.categories)
         data = ModManager._construct_json_data(self.categories)
         json_dump(data, self.mod_list_json_path)
@@ -206,13 +200,13 @@ class ModManager:
     def import_json_mod_list(self, json_path: Path) -> None:
         """Import and apply external JSON mod list"""
         self._sync_with_json(json_path, overwrite=True)
-        self.save_and_apply_mods()
+        self.apply_and_save_mods()
 
     def import_mods_cfg(self, mods_cfg_path: Path) -> None:
         """Import and apply mod list from external mod.cfg"""
         self._create_json_if_missing(force_apply=True, mods_cfg_path=mods_cfg_path)
         self._sync_with_json(overwrite=True)
-        self.save_and_apply_mods()
+        self.apply_and_save_mods()
 
 
 if __name__ == "__main__":
@@ -225,49 +219,26 @@ if __name__ == "__main__":
     mm = ModManager(ruka_kmm_mod_list, game_root_path, workshop_path)
 
     def test_mod():
-        mod_path1 = (
-            "/games/SteamLibrary/steamapps/common/Kenshi/mods/More Combat Animation"
-        )
-        mod_path2 = "/games/SteamLibrary/steamapps/workshop/content/233860/1200632417"
-        mod_path3 = "~/Games/Kenshi/mods/Emkejs-Mod-Core"
+        paths = [
+            "/games/SteamLibrary/steamapps/common/Kenshi/mods/More Combat Animation",
+            "/games/SteamLibrary/steamapps/workshop/content/233860/1200632417",
+            "~/Games/Kenshi/mods/Emkejs-Mod-Core",
+        ]
 
-        mod = Mod.from_path(mod_path1, ModSource.GAME_ROOT)
-        print(mod)
-        print()
-
-        mod = Mod.from_path(mod_path2, ModSource.WORKSHOP)
-        print(mod)
-        print()
-
-        mod = Mod.from_path(mod_path3, ModSource.GAME_ROOT)
-        print(mod)
-        print()
-
-    def test_mod_manager():
-        for mod in mm.categories:
-            mod.desc = mod.desc[:20]
+        for path in paths:
+            path = Path(path).expanduser()
+            mod = Mod.from_path(path, ModSource.GAME_ROOT)
             print(mod)
             print()
-        print("Total mods:", len(mm.categories))
 
-        # for mod in mm.mods:
-        #     print("img: ", mod.img)
+    def test_mod_manager():
+        for cat in mm.categories:
+            for mod in cat.mods:
+                mod.desc = mod.desc[:20]
+        total_mods = sum(len(category.mods) for category in mm.categories)
+        print("Total mods:", total_mods)
 
     # test_mod()
-    # test_mod_manager()
 
-    # lis = mm._get_enabled_mods_name_from_mod_cfg()
-    # for i in lis:
-    #     print(i)
-    # mm.init_sorted_mod_list_from_mod_cfg()
-
-    # test_mod_manager()
-    # print()
-
-    # mm.import_json_mod_list(True)
-    # test_mod_manager()
-    # print()
-
-    # mm.mods[0].enabled = False
-
-    # mm.save_and_apply_mods()
+    test_mod_manager()
+    # mm.apply_and_save_mods()

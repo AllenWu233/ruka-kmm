@@ -18,7 +18,7 @@ class ModSource(Enum):
 class Mod:
     """Information of single modification"""
 
-    enabled: bool = False
+    active: bool = False
     source: ModSource = ModSource.GAME_ROOT
     id: str | None = None
     mod: str = ""  # Mod name displays in Kenshi Official Launcher
@@ -108,7 +108,6 @@ class Mod:
             mod_obj = cls(
                 source=source,
                 id=id,
-                # mod=root.findtext("mod", ""),
                 mod=mod,
                 author=author,
                 title=root.findtext("title", ""),

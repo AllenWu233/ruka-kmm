@@ -7,6 +7,7 @@ authors = [{ name = "AllenWu233", email = "allenwu233@outlook.com" }]
 requires-python = ">=3.13"
 dependencies = [
     "pyqt6>=6.11.0",
+    "pytest>=9.0.3",
 ]
 
 [project.scripts]
