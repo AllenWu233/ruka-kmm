@@ -15,6 +15,14 @@ class ModSource(Enum):
 
 
 @dataclass
+class _ModFileData:
+    """Raw text data extracted from a .mod file"""
+
+    author: str
+    desc: str
+
+
+@dataclass
 class Mod:
     """Information of single modification"""
 
@@ -32,100 +40,82 @@ class Mod:
     img: Path | None = None  # Cover image
 
     @staticmethod
-    def _find_file_ext(root_path: Path, ext: str) -> Path | None:
+    def _find_file_with_ext(root_path: Path, ext: str) -> Path | None:
         """Find full file path with specific extension"""
-        file_path = next(root_path.glob(f"*{ext}"), None)
-        return file_path
+        return next(root_path.glob(f"*{ext}"), None)
 
     @staticmethod
-    def _clean_text(raw: str) -> str:
+    def _clean_mod_text(raw: str) -> str:
         """Keep \n (0x0a), \r (0x0d), \t (0x09),
         remove other C0 control chars (0x00-0x1f except 0x09,0x0a,0x0d),
         use for reading description context from .mod file
         """
         return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", raw)
 
-    @staticmethod
-    def _get_author_and_desc_from_mod_file(path: Path) -> tuple[str, str]:
-        """
-        Read and clean .mod file
-        Return mod author name and description as (author, description)
-        """
-        raw = path.read_text(encoding="utf-8", errors="ignore")
-
-        # Extract first valid text segment as author between control characters
-        # Limit search to the leading chunk before description to prevent false positives
+    @classmethod
+    def _parse_mod_file(cls, mod_file: Path) -> _ModFileData:
+        """Extract author and description from a .mod file"""
+        raw = mod_file.read_text(encoding="utf-8", errors="ignore")
         match = re.search(r"^[\x00-\x1f\x7f]*([A-Za-z0-9_ ]+)", raw[:200])
-        # match = re.search(r"([A-Za-z0-9_][A-Za-z0-9_ ]*)", head)
         author = match.group(1).strip() if match else ""
 
-        desc = Mod._clean_text(raw).removeprefix(author)
-        # Take everything before first 'gamedata.base'
+        desc = cls._clean_mod_text(raw).removeprefix(author)
         stop_marker = "gamedata.base"
         pos = desc.find(stop_marker)
         if pos != -1:
             desc = desc[:pos]
 
-        return (author, desc)
+        return _ModFileData(author=author, desc=desc)
+
+    @staticmethod
+    def _parse_info_file(info_file: Path, source: ModSource) -> dict:
+        """Parse optional .info XML and return extra Mod fields as a dict"""
+        root = ET.parse(info_file).getroot()
+        tags = [elem.text for elem in root.findall(".//tags/string") if elem.text]
+        mod_id = root.findtext("id", "")
+
+        if source == ModSource.WORKSHOP:
+            url = f"https://steamcommunity.com/sharedfiles/filedetails/?id={mod_id}"
+        else:
+            url = ""
+
+        visibility_raw = root.findtext("visibility", "")
+        try:
+            visibility = int(visibility_raw)
+        except ValueError:
+            visibility = None
+
+        return {
+            "id": mod_id,
+            "title": root.findtext("title", ""),
+            "url": url,
+            "tags": tags,
+            "visibility": visibility,
+            "last_update": root.findtext("lastUpdate", ""),
+        }
 
     @classmethod
-    def from_path(cls, root_path: Path | str, source: ModSource) -> Self:
-        """Initialize Mod from single mod directory"""
-        root_path = Path(root_path).expanduser().resolve()
+    def from_path(cls, root_path: Path, source: ModSource) -> Self:
+        """Build Mod from a single mod directory"""
         if not root_path.exists():
             raise FileNotFoundError(f"Mod path does not exist: {root_path}")
         if not root_path.is_dir():
             raise NotADirectoryError(f"Mod path is not a directory: {root_path}")
 
-        mod_file = cls._find_file_ext(root_path, ".mod")
+        mod_file = cls._find_file_with_ext(root_path, ".mod")
         if not mod_file:
             raise FileNotFoundError(f".mod file not found in {root_path}")
 
-        mod = mod_file.stem
-        author, desc = cls._get_author_and_desc_from_mod_file(mod_file)
+        mod_data = cls._parse_mod_file(mod_file)
+        img = cls._find_file_with_ext(root_path, ".img")
+        info_file = cls._find_file_with_ext(root_path, mod_file.stem + ".info")
+        extra = cls._parse_info_file(info_file, source) if info_file else {}
 
-        img = cls._find_file_ext(root_path, ".img")
-
-        # Process metadata if optional .info XML file exists
-        info_file = cls._find_file_ext(root_path, mod + ".info")
-        if info_file:
-            tree = ET.parse(info_file)
-            root = tree.getroot()
-            tags = [elem.text for elem in root.findall(".//tags/string") if elem.text]
-
-            id = root.findtext("id", "")
-
-            if source == ModSource.WORKSHOP:
-                url = f"https://steamcommunity.com/sharedfiles/filedetails/?id={id}"
-            else:
-                url = ""
-
-            try:
-                visibility = int(root.findtext("visibility", ""))
-            except ValueError:
-                visibility = None
-
-            mod_obj = cls(
-                source=source,
-                id=id,
-                mod=mod,
-                author=author,
-                title=root.findtext("title", ""),
-                url=url,
-                tags=tags,
-                visibility=visibility,
-                last_update=root.findtext("lastUpdate", ""),
-                desc=desc,
-                img=img,
-            )
-        else:
-            # Fallback to defaults for missing info file
-            mod_obj = cls(
-                source=source,
-                mod=mod,
-                author=author,
-                desc=desc,
-                img=img,
-            )
-
-        return mod_obj
+        return cls(
+            source=source,
+            mod=mod_file.stem,
+            author=mod_data.author,
+            desc=mod_data.desc,
+            img=img,
+            **extra,
+        )
