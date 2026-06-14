@@ -1,4 +1,12 @@
-mod_list_json = "ruka-kmm-mod-list.json"
+mod_list = "mods.ini"
+
+mod_list_header = """; Ruka KMM Mod List Configuration
+;
+; Categories are wrapped in `[]`
+; Use `_desc` key to describe a category
+; Comments get stripped on every sync, so please do not write your own comments
+;
+"""
 
 category_intros = [
     (
@@ -29,6 +37,6 @@ category_intros = [
     ("Economy", "Merchant behavior, shopping, and economy tweaks."),
     (
         "Uncategorized",
-        "Mods not clearly categorized – place based on what they actually edit.",
+        "Mods to be sorted.",
     ),
 ]

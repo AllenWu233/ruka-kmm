@@ -19,3 +19,13 @@ def timestamp_str() -> str:
     """Return current timestamp as 'YYYY-MM-DD_HH-MM-SS'"""
     now = datetime.now()
     return now.strftime("%Y-%m-%d_%H-%M-%S")
+
+
+def add_suffix(path: Path, suffix: str) -> Path:
+    """Return a new path with `suffix` appended to the filename.
+
+    Unlike `Path.with_suffix()`, this **appends** the suffix instead of
+    replacing the existing one. `suffix` should include the leading dot.
+    e.g. `".bak"`.
+    """
+    return path.with_name(f"{path.name}{suffix}")
